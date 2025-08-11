@@ -1,9 +1,6 @@
 const channels = ['streamdatabase', 'streamdatabase', 'streamdatabase', 'streamdatabase'];
-channels.forEach((ch, i) => {
-    const el = document.getElementById('name-' + i);
-    if (el) el.textContent = ch;
-});
 const players = [];
+const playerReadyPromises = [];
 const streams = document.querySelector('.streams');
 let expandedIndex = -1;
 const saved = {};
@@ -12,17 +9,38 @@ function createPlayer(i, channel) {
     const container = document.getElementById('player-' + i);
     const host = window.location.hostname || 'localhost';
     const opts = { channel, width: '100%', height: '100%', parent: [host], muted: true, autoplay: true };
-    try {
-        players[i] = new Twitch.Player(container, opts);
-        players[i].setVolume(0.6);
-    } catch (e) {
-        players[i] = null;
-    }
+    players[i] = null;
+    playerReadyPromises[i] = new Promise((resolve) => {
+        try {
+            const player = new Twitch.Player(container, opts);
+            players[i] = player;
+            player.addEventListener(Twitch.Player.READY, () => {
+                player.setVolume(0.6);
+                resolve();
+            });
+        } catch (e) {
+            resolve(); // на случай ошибки — резолвим, чтобы не зависать
+        }
+    });
 }
 
 for (let i = 0; i < channels.length; i++) createPlayer(i, channels[i]);
 
-function expandBlock(idx) {
+async function setPlayerVolumeAndMute(i, mute, volume = 0.6) {
+    if (!players[i]) return;
+    await playerReadyPromises[i]; // ждём, пока плеер готов
+    try {
+        players[i].setMuted(mute);
+        if (!mute) {
+            // Лучше чуть задержать, чтобы плеер успел размутиться
+            setTimeout(() => {
+                try { players[i].setVolume(volume); } catch {}
+            }, 50);
+        }
+    } catch {}
+}
+
+async function expandBlock(idx) {
     if (expandedIndex === idx) return;
     collapseAllImmediate();
     const block = document.querySelector(`.block[data-i="${idx}"]`);
@@ -52,7 +70,7 @@ function expandBlock(idx) {
         block.style.height = streams.clientHeight + 'px';
     });
     expandedIndex = idx;
-    try { players[idx]?.setMuted(false); players[idx]?.setVolume(0.6); } catch (e) {}
+    await setPlayerVolumeAndMute(idx, false, 0.6);
     const onEnd = (e) => {
         if (e.target !== block) return;
         block.classList.remove('animating');
@@ -61,7 +79,7 @@ function expandBlock(idx) {
     block.addEventListener('transitionend', onEnd);
 }
 
-function collapseBlock(idx) {
+async function collapseBlock(idx) {
     const block = document.querySelector(`.block[data-i="${idx}"]`);
     if (!block || !saved[idx]) return;
     const orig = saved[idx];
@@ -72,7 +90,7 @@ function collapseBlock(idx) {
         block.style.width = orig.width + 'px';
         block.style.height = orig.height + 'px';
     });
-    const onEnd = (e) => {
+    const onEnd = async (e) => {
         if (e.target !== block) return;
         block.removeEventListener('transitionend', onEnd);
         block.classList.remove('animating');
@@ -84,7 +102,7 @@ function collapseBlock(idx) {
         block.style.zIndex = '';
         expandedIndex = -1;
         delete saved[idx];
-        try { players[idx]?.setMuted(true); } catch (e) {}
+        await setPlayerVolumeAndMute(idx, true);
     };
     block.addEventListener('transitionend', onEnd);
 }
@@ -118,14 +136,10 @@ document.querySelectorAll('.overlay').forEach(ov => {
         else expandBlock(i);
     });
     ov.addEventListener('mouseenter', () => {
-        if (expandedIndex === -1) {
-            try { players[i]?.setMuted(false); players[i]?.setVolume(0.6); } catch (e) {}
-        }
+        if (expandedIndex === -1) setPlayerVolumeAndMute(i, false, 0.6);
     });
     ov.addEventListener('mouseleave', () => {
-        if (expandedIndex === -1) {
-            try { players[i]?.setMuted(true); } catch (e) {}
-        }
+        if (expandedIndex === -1) setPlayerVolumeAndMute(i, true);
     });
 });
 
