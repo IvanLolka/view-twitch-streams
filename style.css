@@ -14,8 +14,7 @@ body {
     align-items: center;
     gap: 100px;
     position: relative;
-    overflow: hidden;
-
+    overflow: visible;
 }
 
 .block {
@@ -56,4 +55,52 @@ body {
     background: transparent;
     z-index: 15;
     cursor: pointer;
+}
+
+/* volume control */
+.vol-control {
+    position: absolute;
+    z-index: 1200;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 8px;
+    background: rgba(0,0,0,0.6);
+    border-radius: 8px;
+    backdrop-filter: blur(4px);
+    color: #fff;
+    font-size: 13px;
+    user-select: none;
+    transition: opacity 160ms ease;
+    opacity: 0;
+    pointer-events: none;
+}
+
+.vol-control.visible {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+.vol-control input[type="range"] {
+    -webkit-appearance: none;
+    width: 120px;
+    height: 6px;
+    background: rgba(255,255,255,0.12);
+    border-radius: 6px;
+    outline: none;
+}
+
+.vol-control input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: #fff;
+    box-shadow: 0 0 2px rgba(0,0,0,0.6);
+    cursor: pointer;
+}
+
+.vol-value {
+    min-width: 36px;
+    text-align: right;
 }
