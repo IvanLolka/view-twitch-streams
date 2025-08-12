@@ -120,6 +120,13 @@ initVolumeControls();
 function positionControl(i) {
     const control = volControls[i];
     if (!control) return;
+
+    if (expandedIndex === i) {
+        control.style.left = '10px';
+        control.style.top = (streams.clientHeight - control.offsetHeight - 10) + 'px';
+        return;
+    }
+
     const block = document.querySelector(`.block[data-i="${i}"]`);
     if (!block) return;
     const containerRect = streams.getBoundingClientRect();
@@ -137,6 +144,7 @@ function positionControl(i) {
     control.style.left = left + 'px';
     control.style.top = top + 'px';
 }
+
 
 function positionAllControls() {
     for (let i = 0; i < volControls.length; i++) positionControl(i);
@@ -201,6 +209,7 @@ function expandBlock(idx) {
         block.removeEventListener('transitionend', onEnd);
     };
     block.addEventListener('transitionend', onEnd);
+    positionControl(idx);
 }
 
 function collapseBlock(idx) {
@@ -230,6 +239,7 @@ function collapseBlock(idx) {
         scheduleHide(idx, 0);
     };
     block.addEventListener('transitionend', onEnd);
+    positionControl(idx);
 }
 
 function collapseAll() {
