@@ -1,74 +1,63 @@
-// code-iframe.js
 const channels = ['streamdatabase', 'streamdatabase', 'streamdatabase', 'streamdatabase'];
 channels.forEach((ch, i) => {
     const el = document.getElementById('name-' + i);
     if (el) el.textContent = ch;
 });
-
-const players = []; // will hold player objects from Embed.getPlayer()
-const embeds = [];  // will hold Embed instances
+const players = [];
 const streams = document.querySelector('.streams');
 let expandedIndex = -1;
 const saved = {};
 const volControls = [];
 const hideTimers = [];
+const ongoingUnmuteTimers = [];
 
-function createIframePlayer(i, channel) {
-    const containerId = 'player-' + i;
+function createPlayer(i, channel) {
+    const container = document.getElementById('player-' + i);
     const host = window.location.hostname || 'localhost';
+    const opts = { channel, width: '100%', height: '100%', parent: [host], muted: true, autoplay: true };
     try {
-        const embed = new Twitch.Embed(containerId, {
-            width: '100%',
-            height: '100%',
-            channel: channel,
-            parent: [host],
-            // allow fullscreen
-            layout: 'video'
-        });
-        embeds[i] = embed;
-        embed.addEventListener(Twitch.Embed.VIDEO_READY, () => {
-            try {
-                const p = embed.getPlayer();
-                players[i] = p;
-                try { p.setVolume(loadVolume(i) / 100); } catch (e) {}
-                try { p.setMuted(true); } catch (e) {}
-                ensureVolume(i, loadVolume(i) / 100, 8, 120);
-            } catch (e) {
-                players[i] = null;
-            }
-        });
+        players[i] = new Twitch.Player(container, opts);
+        try { players[i].setVolume(0.6); } catch (e) {}
     } catch (e) {
         players[i] = null;
     }
 }
 
-for (let i = 0; i < channels.length; i++) createIframePlayer(i, channels[i]);
+for (let i = 0; i < channels.length; i++) createPlayer(i, channels[i]);
 
-function ensureVolume(i, vol = 0.6, attempts = 8, delay = 120) {
+function isVolumeOk(p, vol) {
+    try {
+        if (typeof p.getVolume === 'function') {
+            const gv = p.getVolume();
+            return (typeof gv === 'number' && Math.abs(gv - vol) < 0.03);
+        }
+    } catch (e) {}
+    return true;
+}
+
+function ensureUnmuted(i, vol = 0.6, attempts = 12, delay = 100) {
     const p = players[i];
     if (!p) return;
+    clearTimeout(ongoingUnmuteTimers[i]);
     let tries = 0;
-    const trySet = () => {
+    const tryUnmute = () => {
         if (!players[i]) return;
         try {
             if (typeof p.setVolume === 'function') p.setVolume(vol);
+        } catch (e) {}
+        try {
             if (typeof p.setMuted === 'function') p.setMuted(false);
         } catch (e) {}
         tries++;
         let ok = false;
-        try {
-            if (typeof p.getVolume === 'function') {
-                const gv = p.getVolume();
-                if (typeof gv === 'number' && Math.abs(gv - vol) < 0.02) ok = true;
-            } else {
-                ok = true;
-            }
-        } catch (e) {}
+        try { ok = isVolumeOk(p, vol); } catch (e) {}
         if (!ok && tries < attempts) {
-            setTimeout(trySet, delay);
+            ongoingUnmuteTimers[i] = setTimeout(tryUnmute, delay);
+        } else {
+            clearTimeout(ongoingUnmuteTimers[i]);
         }
     };
-    trySet();
+    tryUnmute();
 }
 
 function saveVolume(i, v) {
@@ -100,6 +89,25 @@ function initVolumeControls() {
         const val = control.querySelector('.vol-value');
 
         const initial = loadVolume(i) / 100;
+        if (players[i]) {
+            try { players[i].setVolume(initial); } catch (e) {}
+            try { players[i].setMuted(true); } catch (e) {}
+            ensureUnmuted(i, initial, 6, 120);
+        }
+
+        let isPointerDown = false;
+
+        range.addEventListener('pointerdown', (ev) => {
+            isPointerDown = true;
+            clearTimeout(hideTimers[i]);
+            showControl(i);
+            const volNow = Number(range.value) / 100;
+            try {
+                if (players[i] && typeof players[i].setVolume === 'function') players[i].setVolume(volNow);
+                if (players[i] && typeof players[i].setMuted === 'function') players[i].setMuted(false);
+            } catch (e) {}
+            ensureUnmuted(i, volNow, 10, 80);
+        });
 
         range.addEventListener('input', (e) => {
             const v = Number(range.value);
@@ -110,16 +118,21 @@ function initVolumeControls() {
                 if (players[i] && typeof players[i].setMuted === 'function') players[i].setMuted(false);
             } catch (e) {}
             saveVolume(i, v);
+            ensureUnmuted(i, volNormalized, 8, 80);
         });
 
         const muteOnRelease = () => {
+            if (!isPointerDown) return;
+            isPointerDown = false;
             try { if (players[i] && typeof players[i].setMuted === 'function') players[i].setMuted(true); } catch (e) {}
+            clearTimeout(ongoingUnmuteTimers[i]);
         };
 
         range.addEventListener('pointerup', muteOnRelease);
         range.addEventListener('mouseup', muteOnRelease);
         range.addEventListener('touchend', muteOnRelease);
-        range.addEventListener('change', muteOnRelease);
+        range.addEventListener('pointercancel', muteOnRelease);
+        range.addEventListener('blur', () => { isPointerDown = false; muteOnRelease(); });
 
         control.addEventListener('mouseenter', () => {
             showControl(i);
@@ -128,12 +141,6 @@ function initVolumeControls() {
         control.addEventListener('mouseleave', () => {
             scheduleHide(i);
         });
-
-        // apply initial when player becomes ready (ensureVolume will set it)
-        setTimeout(() => {
-            try { if (players[i] && typeof players[i].setVolume === 'function') players[i].setVolume(initial); } catch (e) {}
-            try { if (players[i] && typeof players[i].setMuted === 'function') players[i].setMuted(true); } catch (e) {}
-        }, 400);
     }
 }
 initVolumeControls();
@@ -220,16 +227,16 @@ function expandBlock(idx) {
     });
     expandedIndex = idx;
     const savedVol = loadVolume(idx) / 100;
-    ensureVolume(idx, savedVol, 12, 100);
+    ensureUnmuted(idx, savedVol, 14, 80);
     positionControl(idx);
     showControl(idx);
     const onEnd = (e) => {
         if (e.target !== block) return;
         block.classList.remove('animating');
         block.removeEventListener('transitionend', onEnd);
+        positionControl(idx);
     };
     block.addEventListener('transitionend', onEnd);
-    positionControl(idx);
 }
 
 function collapseBlock(idx) {
@@ -282,6 +289,7 @@ function collapseAllImmediate() {
     expandedIndex = -1;
     delete saved[prevIdx];
     scheduleHide(prevIdx, 0);
+    clearTimeout(ongoingUnmuteTimers[prevIdx]);
 }
 
 document.querySelectorAll('.overlay').forEach(ov => {
@@ -295,7 +303,7 @@ document.querySelectorAll('.overlay').forEach(ov => {
         if (expandedIndex === -1) {
             showControl(i);
             const savedVol = loadVolume(i) / 100;
-            ensureVolume(i, savedVol, 10, 100);
+            ensureUnmuted(i, savedVol, 12, 100);
         }
     });
     ov.addEventListener('mouseleave', () => {
