@@ -1,28 +1,48 @@
+// code-iframe.js
 const channels = ['streamdatabase', 'streamdatabase', 'streamdatabase', 'streamdatabase'];
 channels.forEach((ch, i) => {
     const el = document.getElementById('name-' + i);
     if (el) el.textContent = ch;
 });
-const players = [];
+
+const players = []; // will hold player objects from Embed.getPlayer()
+const embeds = [];  // will hold Embed instances
 const streams = document.querySelector('.streams');
 let expandedIndex = -1;
 const saved = {};
 const volControls = [];
 const hideTimers = [];
 
-function createPlayer(i, channel) {
-    const container = document.getElementById('player-' + i);
+function createIframePlayer(i, channel) {
+    const containerId = 'player-' + i;
     const host = window.location.hostname || 'localhost';
-    const opts = { channel, width: '100%', height: '100%', parent: [host], muted: true, autoplay: true };
     try {
-        players[i] = new Twitch.Player(container, opts);
-        try { players[i].setVolume(0.6); } catch (e) {}
+        const embed = new Twitch.Embed(containerId, {
+            width: '100%',
+            height: '100%',
+            channel: channel,
+            parent: [host],
+            // allow fullscreen
+            layout: 'video'
+        });
+        embeds[i] = embed;
+        embed.addEventListener(Twitch.Embed.VIDEO_READY, () => {
+            try {
+                const p = embed.getPlayer();
+                players[i] = p;
+                try { p.setVolume(loadVolume(i) / 100); } catch (e) {}
+                try { p.setMuted(true); } catch (e) {}
+                ensureVolume(i, loadVolume(i) / 100, 8, 120);
+            } catch (e) {
+                players[i] = null;
+            }
+        });
     } catch (e) {
         players[i] = null;
     }
 }
 
-for (let i = 0; i < channels.length; i++) createPlayer(i, channels[i]);
+for (let i = 0; i < channels.length; i++) createIframePlayer(i, channels[i]);
 
 function ensureVolume(i, vol = 0.6, attempts = 8, delay = 120) {
     const p = players[i];
@@ -80,11 +100,6 @@ function initVolumeControls() {
         const val = control.querySelector('.vol-value');
 
         const initial = loadVolume(i) / 100;
-        if (players[i]) {
-            try { players[i].setVolume(initial); } catch (e) {}
-            try { players[i].setMuted(true); } catch (e) {}
-            ensureVolume(i, initial, 8, 100);
-        }
 
         range.addEventListener('input', (e) => {
             const v = Number(range.value);
@@ -113,6 +128,12 @@ function initVolumeControls() {
         control.addEventListener('mouseleave', () => {
             scheduleHide(i);
         });
+
+        // apply initial when player becomes ready (ensureVolume will set it)
+        setTimeout(() => {
+            try { if (players[i] && typeof players[i].setVolume === 'function') players[i].setVolume(initial); } catch (e) {}
+            try { if (players[i] && typeof players[i].setMuted === 'function') players[i].setMuted(true); } catch (e) {}
+        }, 400);
     }
 }
 initVolumeControls();
@@ -144,7 +165,6 @@ function positionControl(i) {
     control.style.left = left + 'px';
     control.style.top = top + 'px';
 }
-
 
 function positionAllControls() {
     for (let i = 0; i < volControls.length; i++) positionControl(i);
