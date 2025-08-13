@@ -25,6 +25,8 @@ body {
     border-radius: 20px;
     overflow: hidden;
     will-change: left, top, width, height;
+    border: 8px solid #8400b9;
+    outline: 2px solid #fff;
 }
 
 .block.animating {
