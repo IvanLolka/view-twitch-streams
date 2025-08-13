@@ -1,3 +1,4 @@
+'use strict';
 const channels = ['streamdatabase', 'streamdatabase', 'streamdatabase', 'streamdatabase'];
 channels.forEach((ch, i) => {
     const el = document.getElementById('name-' + i);
@@ -9,9 +10,8 @@ let expandedIndex = -1;
 const saved = {};
 const volControls = [];
 const hideTimers = [];
-
-const muteTokens = [];
-const scheduledMuteTimers = [];
+const muteTimers = [];
+const interacting = [];
 
 function createPlayer(i, channel) {
     const container = document.getElementById('player-' + i);
@@ -23,28 +23,18 @@ function createPlayer(i, channel) {
     } catch (e) {
         players[i] = null;
     }
-    muteTokens[i] = 0;
-    scheduledMuteTimers[i] = null;
 }
 
 for (let i = 0; i < channels.length; i++) createPlayer(i, channels[i]);
-function ensureVolume(i, vol = 0.6, attempts = 10, delay = 100) {
+
+function ensureVolume(i, vol = 0.6, attempts = 8, delay = 120) {
     const p = players[i];
     if (!p) return;
     let tries = 0;
-    const currentToken = ++muteTokens[i];
-    clearTimeout(scheduledMuteTimers[i]);
-    scheduledMuteTimers[i] = null;
-
     const trySet = () => {
         if (!players[i]) return;
-        
         try {
             if (typeof p.setVolume === 'function') p.setVolume(vol);
-            if (typeof p.setMuted === 'function') p.setMuted(false);
-            if (typeof p.play === 'function') {
-                try { p.play(); } catch (e) {}
-            }
         } catch (e) {}
         tries++;
         let ok = false;
@@ -55,7 +45,7 @@ function ensureVolume(i, vol = 0.6, attempts = 10, delay = 100) {
             } else {
                 ok = true;
             }
-        } catch (e) { ok = true; }
+        } catch (e) {}
         if (!ok && tries < attempts) {
             setTimeout(trySet, delay);
         }
@@ -63,27 +53,19 @@ function ensureVolume(i, vol = 0.6, attempts = 10, delay = 100) {
     trySet();
 }
 
-function scheduleMute(i, delay = 120) {
-    if (scheduledMuteTimers[i]) {
-        clearTimeout(scheduledMuteTimers[i]);
-        scheduledMuteTimers[i] = null;
-    }
-    const tokenSnapshot = ++muteTokens[i];
-    scheduledMuteTimers[i] = setTimeout(() => {
-        if (tokenSnapshot !== muteTokens[i]) return;
-        try {
-            if (players[i] && typeof players[i].setMuted === 'function') players[i].setMuted(true);
-        } catch (e) {}
-        scheduledMuteTimers[i] = null;
-    }, delay);
-}
-
-function cancelScheduledMute(i) {
-    if (scheduledMuteTimers[i]) {
-        clearTimeout(scheduledMuteTimers[i]);
-        scheduledMuteTimers[i] = null;
-    }
-    muteTokens[i] = (muteTokens[i] || 0) + 1;
+function performUnmute(i, volNormalized) {
+    const p = players[i];
+    if (!p) return;
+    try {
+        if (typeof p.setVolume === 'function') p.setVolume(volNormalized);
+    } catch (e) {}
+    try {
+        if (typeof p.setMuted === 'function') p.setMuted(false);
+    } catch (e) {}
+    try {
+        if (typeof p.play === 'function') p.play();
+    } catch (e) {}
+    ensureVolume(i, volNormalized, 8, 80);
 }
 
 function saveVolume(i, v) {
@@ -99,8 +81,22 @@ function loadVolume(i, defaultVal = 60) {
     } catch (e) { return defaultVal; }
 }
 
+function scheduleMuteIfIdle(i, delay = 500) {
+    clearTimeout(muteTimers[i]);
+    muteTimers[i] = setTimeout(() => {
+        if (!interacting[i] && expandedIndex !== i) {
+            try { players[i] && typeof players[i].setMuted === 'function' && players[i].setMuted(true); } catch (e) {}
+        }
+    }, delay);
+}
+
+function cancelScheduledMute(i) {
+    clearTimeout(muteTimers[i]);
+}
+
 function initVolumeControls() {
     for (let i = 0; i < channels.length; i++) {
+        interacting[i] = false;
         const control = document.createElement('div');
         control.className = 'vol-control';
         control.setAttribute('data-v', String(i));
@@ -110,62 +106,68 @@ function initVolumeControls() {
         `;
         streams.appendChild(control);
         volControls[i] = control;
-
         const range = control.querySelector('input[type="range"]');
         const val = control.querySelector('.vol-value');
-
         const initial = loadVolume(i) / 100;
         if (players[i]) {
             try { players[i].setVolume(initial); } catch (e) {}
             try { players[i].setMuted(true); } catch (e) {}
-            ensureVolume(i, initial, 6, 120); 
+            ensureVolume(i, initial, 8, 100);
         }
-
+        range.addEventListener('pointerdown', (e) => {
+            interacting[i] = true;
+            cancelScheduledMute(i);
+            const v = Number(range.value);
+            const volNormalized = v / 100;
+            performUnmute(i, volNormalized);
+        });
         range.addEventListener('input', (e) => {
             const v = Number(range.value);
             val.textContent = String(v);
             const volNormalized = v / 100;
-            cancelScheduledMute(i);
-            ensureVolume(i, volNormalized, 8, 100);
+            try {
+                if (players[i] && typeof players[i].setVolume === 'function') players[i].setVolume(volNormalized);
+            } catch (e) {}
             saveVolume(i, v);
         });
-
-        const muteOnRelease = () => {
-            scheduleMute(i, 50);
+        const finishInteraction = () => {
+            interacting[i] = false;
+            scheduleMuteIfIdle(i, 600);
         };
-
-        range.addEventListener('pointerup', muteOnRelease);
-        range.addEventListener('mouseup', muteOnRelease);
-        range.addEventListener('touchend', muteOnRelease);
-        range.addEventListener('change', muteOnRelease);
-
-        control.addEventListener('mouseenter', () => {
+        range.addEventListener('pointerup', finishInteraction);
+        range.addEventListener('touchend', finishInteraction);
+        range.addEventListener('mouseup', finishInteraction);
+        control.addEventListener('pointerenter', () => {
             showControl(i);
+            cancelScheduledMute(i);
             clearTimeout(hideTimers[i]);
+            const v = Number(range.value);
+            const volNormalized = v / 100;
+            ensureVolume(i, volNormalized, 6, 100);
         });
-        control.addEventListener('mouseleave', () => {
+        control.addEventListener('pointerleave', () => {
+            if (!interacting[i]) scheduleMuteIfIdle(i, 500);
             scheduleHide(i);
         });
     }
+    setTimeout(positionAllControls, 60);
+    setTimeout(positionAllControls, 350);
 }
 initVolumeControls();
 
 function positionControl(i) {
     const control = volControls[i];
     if (!control) return;
-
     if (expandedIndex === i) {
         control.style.left = '10px';
         control.style.top = (streams.clientHeight - control.offsetHeight - 10) + 'px';
         return;
     }
-
     const block = document.querySelector(`.block[data-i="${i}"]`);
     if (!block) return;
     const containerRect = streams.getBoundingClientRect();
     const blockRect = block.getBoundingClientRect();
     const ctrlRect = control.getBoundingClientRect();
-
     const isTopRow = (i < 2);
     const left = Math.round(blockRect.left - containerRect.left + 8 + streams.scrollLeft);
     let top;
@@ -232,8 +234,7 @@ function expandBlock(idx) {
     });
     expandedIndex = idx;
     const savedVol = loadVolume(idx) / 100;
-    cancelScheduledMute(idx);
-    ensureVolume(idx, savedVol, 12, 100);
+    performUnmute(idx, savedVol);
     positionControl(idx);
     showControl(idx);
     const onEnd = (e) => {
@@ -268,7 +269,7 @@ function collapseBlock(idx) {
         block.style.zIndex = '';
         expandedIndex = -1;
         delete saved[idx];
-        scheduleMute(idx, 50);
+        try { players[idx]?.setMuted(true); } catch (e) {}
         scheduleHide(idx, 0);
     };
     block.addEventListener('transitionend', onEnd);
@@ -295,7 +296,6 @@ function collapseAllImmediate() {
     expandedIndex = -1;
     delete saved[prevIdx];
     scheduleHide(prevIdx, 0);
-    cancelScheduledMute(prevIdx);
 }
 
 document.querySelectorAll('.overlay').forEach(ov => {
@@ -305,17 +305,15 @@ document.querySelectorAll('.overlay').forEach(ov => {
         if (expandedIndex === i) collapseAll();
         else expandBlock(i);
     });
-    ov.addEventListener('mouseenter', () => {
-        if (expandedIndex === -1) {
-            cancelScheduledMute(i);
-            showControl(i);
-            const savedVol = loadVolume(i) / 100;
-            ensureVolume(i, savedVol, 12, 100);
-        }
+    ov.addEventListener('pointerenter', () => {
+        showControl(i);
+        const savedVol = loadVolume(i) / 100;
+        performUnmute(i, savedVol);
+        cancelScheduledMute(i);
     });
-    ov.addEventListener('mouseleave', () => {
+    ov.addEventListener('pointerleave', () => {
         if (expandedIndex === -1) {
-            scheduleMute(i, 80);
+            scheduleMuteIfIdle(i, 200);
             scheduleHide(i);
         } else {
             scheduleHide(i, 600);
